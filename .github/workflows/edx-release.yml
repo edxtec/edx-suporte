@@ -1,0 +1,87 @@
+name: EDX release
+
+# Dispara com uma tag "edx-<versão upstream>-<revisão EDX>", ex.: edx-1.4.9-1
+# ou manualmente pela aba Actions. As tags do upstream (1.4.9, nightly) não
+# casam com este padrão, então os workflows originais não interferem.
+on:
+  push:
+    tags:
+      - "edx-*"
+  workflow_dispatch:
+    inputs:
+      flavor:
+        description: "Qual app gerar"
+        type: choice
+        options: [suporte, tecnico]
+        default: suporte
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/edx-build.yml
+    secrets: inherit
+    with:
+      upload-artifact: true
+      upload-tag: ${{ github.ref_type == 'tag' && github.ref_name || format('edx-dev-{0}', github.run_number) }}
+      flavor: ${{ inputs.flavor || 'suporte' }}
+
+  # Renomeia os pacotes (rustdesk-* -> <App>-*) e publica o código-fonte
+  # completo, com submódulos, ao lado dos binários (AGPL-3.0, seção 6).
+  finalize:
+    needs: build
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('edx-dev-{0}', github.run_number) }}
+      FLAVOR: ${{ inputs.flavor || 'suporte' }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Resolve app name
+        run: |
+          APP=$(python3 -c "import json,os;b=json.load(open('edx/brand.json',encoding='utf-8'));print(b['flavors'][os.environ['FLAVOR']]['app_name'])")
+          echo "APP=$APP" >> "$GITHUB_ENV"
+
+      - name: Rename release assets
+        run: |
+          mkdir -p dl out
+          gh release download "$TAG" -D dl --repo "$GITHUB_REPOSITORY"
+          for f in dl/*; do
+            b=$(basename "$f")
+            # O app do cliente é só portátil: descarta instaladores.
+            if [ "$FLAVOR" = "suporte" ] && echo "$b" | grep -Eq '\.(msi|deb|rpm|zst)$'; then
+              gh release delete-asset "$TAG" "$b" --yes --repo "$GITHUB_REPOSITORY"
+              continue
+            fi
+            n=$(echo "$b" | sed -E "s/^[Rr]ust[Dd]esk/${APP}/")
+            mv "$f" "out/$n"
+            if [ "$n" != "$b" ]; then
+              gh release delete-asset "$TAG" "$b" --yes --repo "$GITHUB_REPOSITORY"
+            fi
+          done
+          ls -l out
+
+      - name: Build corresponding-source tarball
+        env:
+          EDX_RS_PUB_KEY: ${{ vars.EDX_RS_PUB_KEY }}
+        run: |
+          VER=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          NAME="${APP}-${VER}-${TAG}-source"
+          # Código exatamente como compilado: upstream + submódulos, já com a
+          # marca aplicada, mais o kit edx/ que a gera (AGPL-3.0 §1 e §6).
+          python3 edx/scripts/rebrand.py --flavor "$FLAVOR"
+          tar --exclude=.git --exclude=./dl --exclude=./out \
+              --transform "s,^\.,${NAME}," -czf "out/${NAME}.tar.gz" .
+          cp LICENCE out/LICENCE.txt
+          cp EDX-NOTICE.md out/EDX-NOTICE.md
+          (cd out && sha256sum * > SHA256SUMS.txt)
+
+      - name: Upload renamed assets
+        run: |
+          gh release upload "$TAG" out/* --clobber --repo "$GITHUB_REPOSITORY"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file edx/RELEASE_NOTES.md

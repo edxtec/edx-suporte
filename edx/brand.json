@@ -1,0 +1,59 @@
+{
+  "_comment": "Identidade EDX aplicada ao código upstream por edx/scripts/rebrand.py. Altere aqui, nunca nos arquivos do upstream.",
+
+  "company": "EDX Tecnologia em Informação Ltda",
+  "company_ascii": "EDX Tecnologia em Informacao Ltda",
+  "tagline": "Suporte Técnico em Infraestrutura",
+  "org_id": "br.com.edxinfo",
+  "upstream_copyright": "Purslane Tech Pte. Ltd.",
+
+  "rendezvous_server": "remote.edxinfo.com.br",
+  "public_key": "COLE_AQUI_O_CONTEUDO_DE_id_ed25519.pub_DO_HBBS",
+  "api_server": "",
+
+  "urls": {
+    "website": "https://www.edxinfo.com.br",
+    "privacy": "https://www.edxinfo.com.br/privacidade",
+    "support": "https://www.edxinfo.com.br/suporte",
+    "source": "https://github.com/edxtec/edx-suporte",
+    "download": "https://github.com/edxtec/edx-suporte/releases"
+  },
+
+  "colors": {
+    "primary": "#1BA3DD",
+    "secondary": "#2DB34B",
+    "accent": "#E0222B"
+  },
+
+  "flavors": {
+    "suporte": {
+      "_comment": "App do cliente: só recebe conexões, roda sem instalar, configurações travadas no servidor EDX.",
+      "app_name": "EDX-Suporte",
+      "hard": {
+        "conn-type": "incoming",
+        "disable-installation": "Y",
+        "disable-settings": "Y",
+        "disable-ab": "Y",
+        "disable-account": "Y"
+      },
+      "builtin": {
+        "hide-powered-by-me": "Y",
+        "hide-server-settings": "Y",
+        "hide-proxy-settings": "Y",
+        "hide-help-cards": "Y",
+        "register-device": "N"
+      }
+    },
+    "tecnico": {
+      "_comment": "App dos técnicos EDX: conecta e recebe, pode instalar, servidor travado.",
+      "app_name": "EDX-Tecnico",
+      "hard": {},
+      "builtin": {
+        "hide-powered-by-me": "Y",
+        "hide-server-settings": "Y",
+        "hide-help-cards": "Y",
+        "register-device": "N"
+      }
+    }
+  }
+}
