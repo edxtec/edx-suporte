@@ -36,20 +36,21 @@ env:
   # engine is 3.44. Every other platform stays on FLUTTER_VERSION (3.24.5) until Windows 7
   # support is restored after the upstream-wide Flutter bump. The arm64 job patches the few
   # 3.44-only source/pubspec changes on the fly (see "Patch RustDesk sources for Flutter 3.44").
-  FLUTTER_WINDOWS_ARM_VERSION: "3.44.0"
+  FLUTTER_WINDOWS_ARM_VERSION: "3.44.9"
   # for arm64 linux because official Dart SDK does not work
   FLUTTER_ELINUX_VERSION: "3.16.9"
   TAG_NAME: "${{ inputs.upload-tag }}"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-  # vcpkg version: 2025.08.27
+  # vcpkg version: 2026.07.29
   # If we change the `VCPKG COMMIT_ID`, please remember:
   # 1. Call `$VCPKG_ROOT/vcpkg x-update-baseline` to update the baseline in `vcpkg.json`.
   #  Or we may face build issue like 
   #  https://github.com/rustdesk/rustdesk/actions/runs/14414119794/job/40427970174
   # 2. Update the `VCPKG_COMMIT_ID` in `ci.yml` and `playground.yml`.
-  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+  VCPKG_CMAKE_VERSION: "4.3.0"
   ARMV7_VCPKG_COMMIT_ID: "6f29f12e82a8293156836ad81cc9bf5af41fe836" # 2025.01.13, got "/opt/artifacts/vcpkg/vcpkg: No such file or directory" with latest version
-  VERSION: "1.4.9"
+  VERSION: "1.5.0"
   NDK_VERSION: "r28c"
   #signing keys env variable checks
   ANDROID_SIGNING_KEY: "${{ secrets.ANDROID_SIGNING_KEY }}"
@@ -209,7 +210,9 @@ jobs:
         run: |
           cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff $(dirname $(dirname $(which flutter)))
           cd $(dirname $(dirname $(which flutter)))
-          [[ "3.24.5" == ${{env.FLUTTER_VERSION}} ]] && git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
+          if [[ "3.24.5" == ${{env.FLUTTER_VERSION}} ]]; then
+            git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
+          fi
 
       - name: Patch RustDesk sources for Flutter 3.44 (arm64)
         # arm64 is the only target on Flutter 3.44; apply its source/pubspec deltas on the fly
@@ -356,6 +359,12 @@ jobs:
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@6fb02220983dee41ce7ae257b6f4d8f9bf5ed4ce # v2
+        with:
+          # Select the MSBuild process architecture; -p:Platform sets the MSI target.
+          # Native ARM64 tools give the compiler more address space for PCH files
+          # (C3859/C1076 were reported by HostX86\arm64\CL.exe).
+          # Keep the action's default x86 MSBuild for the existing x64 MSI job.
+          msbuild-architecture: ${{ matrix.job.arch == 'aarch64' && 'arm64' || 'x86' }}
 
       - name: Build msi
         # Builds the MSI for the matrix arch. res/msi (WiX v4 + native CustomActions) carries
@@ -371,6 +380,54 @@ jobs:
           $msi = Get-ChildItem ./Package/bin/*/Release/en-us/Package.msi | Select-Object -First 1
           mv $msi.FullName ../../SignOutput/rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.msi
           sha256sum ../../SignOutput/rustdesk-*.msi
+
+      - name: Build pre-built MSI template
+        # Two things this works around: preprocess.py rewrites res/msi in place, so the
+        # tree is reset around this second variant; and it locates the app as
+        # <app-name>.exe inside the dist, so the dist copy is renamed to match.
+        #
+        # The placeholder is chosen to keep this template as close to the shipped msi as
+        # possible: eight characters like "RustDesk", and a valid 8.3 name, so WiX
+        # derives no short name for it. A longer placeholder would get one, and a patch
+        # cannot rewrite a truncated placeholder, leaving short names pointing at it.
+        #
+        # It still has to be unique, which is why "RustDesk" itself cannot be used:
+        # it also names payload that must never be renamed, such as librustdesk.dll
+        # and drivers\RustDeskPrinterDriver.
+        #
+        #
+        # Building the arm64 template on the native arm64 runner makes the ARM
+        # package available: the build agents are x64 and cannot run
+        # preprocess.py against an ARM exe.
+        if: env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          git checkout -- res/msi
+          cp -r ./rustdesk ./rustdesk-msi-template
+          mv ./rustdesk-msi-template/rustdesk.exe ./rustdesk-msi-template/RDAPPNAM.exe
+          Set-Content -Path ./rustdesk-msi-template/custom.txt -Value 'placeholder' -NoNewline
+          $assets = './rustdesk-msi-template/data/flutter_assets/assets'
+          New-Item -ItemType Directory -Force -Path $assets | Out-Null
+          foreach ($a in 'icon.ico','icon.png','logo.png','logo_light.png','logo_dark.png') {
+            Set-Content -Path "$assets/$a" -Value 'placeholder' -NoNewline
+          }
+          pushd ./res/msi
+          python preprocess.py --arp --template --revision-version 0 -d ../../rustdesk-msi-template --app-name RDAPPNAM
+          $msiPlatform = if ('${{ matrix.job.arch }}' -eq 'aarch64') { 'ARM64' } else { 'x64' }
+          msbuild msi.sln -t:clean -p:Configuration=Release -p:Platform=$msiPlatform
+          msbuild msi.sln -p:Configuration=Release -p:Platform=$msiPlatform /p:TargetVersion=Windows10
+          $msi = Get-ChildItem ./Package/bin/*/Release/en-us/Package.msi | Select-Object -First 1
+          popd
+          mkdir ./msi-template
+          mv $msi.FullName ./msi-template/rustdesk-template-${{ matrix.job.arch }}.msi
+          git checkout -- res/msi
+          rm -r -fo ./rustdesk-msi-template
+
+      - name: Upload unsigned msi template
+        if: env.UPLOAD_ARTIFACT == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rustdesk-unsigned-msi-template-${{ matrix.job.arch }}
+          path: ./msi-template
 
       - name: Sign rustdesk self-extracted file
         if: env.UPLOAD_ARTIFACT == 'true' && env.SIGN_BASE_URL != '-2'
@@ -496,7 +553,9 @@ jobs:
       - name: Patch flutter
         run: |
           cd $(dirname $(dirname $(which flutter)))
-          [[ "3.24.5" == ${{env.FLUTTER_VERSION}} ]] && git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff
+          if [[ "3.24.5" == ${{env.FLUTTER_VERSION}} ]]; then
+            git apply ${{ github.workspace }}/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff
+          fi
 
       - name: Workaround for flutter issue
         shell: bash
@@ -522,6 +581,11 @@ jobs:
         with:
           name: bridge-artifact
           path: ./
+
+      - name: Test cursor sizing
+        if: ${{ !inputs.upload-artifact && matrix.job.arch == 'aarch64' }}
+        working-directory: flutter
+        run: flutter test --timeout 60s test/cursor_size_test.dart test/cursor_replay_test.dart test/cursor_default_test.dart
 
       - name: Setup vcpkg with Github Actions binary cache
         uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
@@ -593,7 +657,11 @@ jobs:
           security unlock-keychain -p ${{ secrets.MACOS_P12_PASSWORD }} rustdesk.keychain
           # start sign the rustdesk.app and dmg
           rm -rf *.dmg || true
-          codesign --force --options runtime -s ${{ secrets.MACOS_CODESIGN_IDENTITY }} --deep --strict ./flutter/build/macos/Build/Products/Release/${{ env.EDX_APP }}.app -vvv
+          # the identity secret carries its own shell quoting, so expand it inline like the dmg codesign below
+          bash ./.github/scripts/sign-macos-app.sh \
+            ./flutter/build/macos/Build/Products/Release/${{ env.EDX_APP }}.app \
+            ${{ secrets.MACOS_CODESIGN_IDENTITY }} \
+            ./flutter/macos/Runner/Release.entitlements
           create-dmg --icon "${{ env.EDX_APP }}.app" 200 190 --hide-extension "${{ env.EDX_APP }}.app" --window-size 800 400 --app-drop-link 600 185 rustdesk-${{ env.VERSION }}.dmg ./flutter/build/macos/Build/Products/Release/${{ env.EDX_APP }}.app
           codesign --force --options runtime -s ${{ secrets.MACOS_CODESIGN_IDENTITY }} --deep --strict rustdesk-${{ env.VERSION }}.dmg -vvv
           # notarize the rustdesk-${{ env.VERSION }}.dmg
@@ -673,7 +741,6 @@ jobs:
           echo "EDX_APP=$(python3 -c "import json;b=json.load(open('edx/brand.json',encoding='utf-8'));print(b['flavors']['${{ inputs.flavor }}']['app_name'])")" >> "$GITHUB_ENV"
 
       - name: Set Swap Space
-        if: ${{ matrix.job.arch == 'x86_64' }}
         uses: pierotofy/set-swap-space@49819abfb41bd9b44fb781159c033dba90353a7c # v1.0
         with:
           swap-size-gb: 12
@@ -707,6 +774,15 @@ jobs:
         with:
           name: bridge-artifact
           path: ./
+
+      # vcpkg 2026.07.29's SPDX scripts require CMake 4.3+, but this ARM64 runner selects CMake 3.31.
+      - name: Install CMake for vcpkg on Linux ARM64
+        if: matrix.job.arch == 'aarch64' && env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          python3 -m pip install --user "cmake==${VCPKG_CMAKE_VERSION}"
+          user_base="$(python3 -m site --user-base)"
+          "${user_base}/bin/cmake" --version
+          echo "${user_base}/bin" >> "${GITHUB_PATH}"
 
       - name: Setup vcpkg with Github Actions binary cache
         if: matrix.job.arch == 'x86_64' || env.UPLOAD_ARTIFACT == 'true'
@@ -775,7 +851,6 @@ jobs:
                libgstreamer1.0-dev \
                libgstreamer-plugins-base1.0-dev \
                libgtk-3-dev \
-               libpam0g-dev \
                libpulse-dev \
                libva-dev \
                libxcb-randr0-dev \
@@ -960,6 +1035,11 @@ jobs:
           files: |
             res/rustdesk-${{ env.VERSION }}*.zst
 
+  # Same build as build-rustdesk-linux x86_64 -- same vcpkg/ffmpeg, same ubuntu18.04 container, same
+  # rust and flutter -- only with the drm feature on, so it ships as the separate
+  # rustdesk-unattended-wayland deb. libdrmtap is built on the runner because bionic's meson is too
+  # old for it. A separate job rather than a matrix entry of build-rustdesk-linux: appimage and
+  # flatpak need that job, and a failure here must not skip them.
   build-appimage:
     name: Build appimage ${{ matrix.job.target }}
     needs: [build-rustdesk-linux]
@@ -1008,7 +1088,9 @@ jobs:
           sudo pip3 install git+https://github.com/rustdesk-org/appimage-builder.git
           # run appimage-builder
           pushd appimage
+          ./build-apprun.sh ${{ matrix.job.arch }}
           sudo appimage-builder --skip-tests --recipe ./AppImageBuilder-${{ matrix.job.arch }}.yml
+          cmp AppDir/AppRun appimage-build/AppRun/v2.0.0/AppRun-Release-${{ matrix.job.arch }}
 
       - name: Publish appimage package
         if: env.UPLOAD_ARTIFACT == 'true'
