@@ -18,6 +18,12 @@ import json
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
+import sys
+
+# Console do Windows (cp1252) não tem ✔/✘; sem isso o print derruba o script.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 EDX = Path(__file__).resolve().parents[1]
 SRC = EDX / "assets" / "logo.png"

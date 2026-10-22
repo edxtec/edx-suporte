@@ -28,6 +28,11 @@ import shutil
 import sys
 from pathlib import Path
 
+# Console do Windows (cp1252) não tem ✔/✘; sem isso o print derruba o script.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 EDX = Path(__file__).resolve().parents[1]
 ROOT = EDX.parent
 GEN = EDX / "assets" / "generated"
