@@ -195,6 +195,9 @@ def main():
     server = os.environ.get("EDX_RENDEZVOUS_SERVER") or brand["rendezvous_server"]
     if KEY_PLACEHOLDER in key:
         if not args.allow_missing_key and not args.check:
+            if os.environ.get("GITHUB_ACTIONS"):
+                print("::error title=EDX rebrand::chave pública do hbbs ausente "
+                      "(variável de repositório EDX_RS_PUB_KEY ou edx/brand.json)")
             sys.exit("ERRO: public_key não configurada em edx/brand.json "
                      "(ou variável EDX_RS_PUB_KEY). Sem ela o app não confia no hbbs.")
         key = ""
@@ -368,6 +371,10 @@ def main():
         print("\n== FALHAS (o upstream mudou? ajuste a âncora em rebrand.py):")
         for e in P.errors:
             print(f"  ✘ {e}")
+        if os.environ.get("GITHUB_ACTIONS"):
+            # aparece no resumo da execução, sem precisar abrir o log
+            for e in P.errors[:10]:
+                print(f"::error title=EDX rebrand::{e}")
         sys.exit(1)
 
     if not args.check:

@@ -1,0 +1,5 @@
+# O .gitignore do upstream ignora *png e *svg; aqui dentro eles são necessários.
+!*png
+!*svg
+# prévia só para conferência humana
+assets/generated/_preview.png
