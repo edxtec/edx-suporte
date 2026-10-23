@@ -58,7 +58,16 @@ jobs:
               gh release delete-asset "$TAG" "$b" --yes --repo "$GITHUB_REPOSITORY"
               continue
             fi
-            n=$(echo "$b" | sed -E "s/^[Rr]ust[Dd]esk/${APP}/")
+            # Nomes fixos (sem versão) para os portáteis: assim o link
+            # .../releases/latest/download/<App>-<arq>.<ext> sempre aponta
+            # para a versão mais recente. A versão fica no nome da release.
+            arch=$(echo "$b" | grep -oE 'x86_64|aarch64' | head -1)
+            ext="${b##*.}"
+            if [ -n "$arch" ] && echo "$ext" | grep -Eq '^(exe|dmg|AppImage)$'; then
+              n="${APP}-${arch}.${ext}"
+            else
+              n=$(echo "$b" | sed -E "s/^[Rr]ust[Dd]esk/${APP}/")
+            fi
             mv "$f" "out/$n"
             if [ "$n" != "$b" ]; then
               gh release delete-asset "$TAG" "$b" --yes --repo "$GITHUB_REPOSITORY"
@@ -84,4 +93,6 @@ jobs:
       - name: Upload renamed assets
         run: |
           gh release upload "$TAG" out/* --clobber --repo "$GITHUB_REPOSITORY"
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file edx/RELEASE_NOTES.md
+          VER=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file edx/RELEASE_NOTES.md \
+            --title "${APP} ${VER} (${TAG})"

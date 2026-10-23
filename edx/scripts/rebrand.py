@@ -175,6 +175,107 @@ def gen_branding_rs(brand, flavor_name, flavor):
     return "\n".join(lines)
 
 
+def gen_self_install_rs(cfg):
+    """Módulo do executável portátil (Windows): cópia local + atalho na Área de Trabalho."""
+    head = [
+        "// EDX Tecnologia: gerado por edx/scripts/rebrand.py a partir de edx/brand.json.",
+        "// Modificação do RustDesk (AGPL-3.0). Ver EDX-NOTICE.md.",
+    ]
+    if not cfg:
+        return "\n".join(head + ["pub fn ensure() {}", ""])
+    for k in ("dir", "exe", "shortcut"):
+        if not cfg.get(k) or re.search(r'[<>:"/\\|?*]', cfg[k]):
+            sys.exit(f"windows_self_install.{k} inválido: {cfg.get(k)!r}")
+    return "\n".join(head) + "\n" + SELF_INSTALL_RS.replace(
+        "@DIR@", rust_str(cfg["dir"])).replace(
+        "@EXE@", rust_str(cfg["exe"])).replace(
+        "@SHORTCUT@", rust_str(cfg["shortcut"]))
+
+
+SELF_INSTALL_RS = """use std::{
+    ffi::OsStr,
+    os::windows::ffi::OsStrExt,
+    path::{Path, PathBuf},
+};
+use windows::{
+    core::{Interface, PCWSTR},
+    Win32::{
+        System::Com::{
+            CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, IPersistFile,
+            CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+        },
+        UI::Shell::{
+            FOLDERID_Desktop, IShellLinkW, SHGetKnownFolderPath, ShellLink, KF_FLAG_DEFAULT,
+        },
+    },
+};
+
+const DIR_NAME: &str = @DIR@;
+const EXE_NAME: &str = @EXE@;
+const SHORTCUT_NAME: &str = @SHORTCUT@;
+
+pub fn ensure() {
+    let Some(dir) = dirs::data_local_dir().map(|d| d.join(DIR_NAME)) else {
+        return;
+    };
+    let target = dir.join(EXE_NAME);
+    let Ok(current) = std::env::current_exe() else {
+        return;
+    };
+    if is_same_file(&current, &target) || std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    // Fails while a copy started from that folder is still running; that copy keeps working.
+    let _ = std::fs::copy(&current, &target);
+    if target.is_file() {
+        let _ = create_desktop_shortcut(&target, &dir);
+    }
+}
+
+fn is_same_file(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn wide(s: &OsStr) -> Vec<u16> {
+    s.encode_wide().chain(Some(0)).collect()
+}
+
+fn create_desktop_shortcut(target: &Path, dir: &Path) -> windows::core::Result<()> {
+    unsafe {
+        let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let res = save_shortcut(target, dir);
+        if init.is_ok() {
+            CoUninitialize();
+        }
+        res
+    }
+}
+
+unsafe fn save_shortcut(target: &Path, dir: &Path) -> windows::core::Result<()> {
+    // Known-folder lookup follows a Desktop redirected to OneDrive.
+    let desktop = SHGetKnownFolderPath(&FOLDERID_Desktop, KF_FLAG_DEFAULT, None)?;
+    let desktop_dir = desktop.to_string().map(PathBuf::from);
+    CoTaskMemFree(Some(desktop.0 as *const _));
+    let lnk = desktop_dir?.join(format!("{SHORTCUT_NAME}.lnk"));
+
+    let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+    let target_w = wide(target.as_os_str());
+    let dir_w = wide(dir.as_os_str());
+    let desc_w = wide(OsStr::new(SHORTCUT_NAME));
+    link.SetPath(PCWSTR(target_w.as_ptr()))?;
+    link.SetWorkingDirectory(PCWSTR(dir_w.as_ptr()))?;
+    link.SetIconLocation(PCWSTR(target_w.as_ptr()), 0)?;
+    link.SetDescription(PCWSTR(desc_w.as_ptr()))?;
+    let lnk_w = wide(lnk.as_os_str());
+    link.cast::<IPersistFile>()?
+        .Save(PCWSTR(lnk_w.as_ptr()), true)
+}
+"""
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--flavor", default="suporte")
@@ -303,6 +404,18 @@ def main():
         P.regex(toml, r'(?m)^FileDescription = "[^"]*"', f'FileDescription = "{app}"', 1, 1,
                 f"{toml} FileDescription")
 
+    # executável portátil (Windows): cópia em %LOCALAPPDATA% + atalho na Área de Trabalho
+    pmain = "libs/portable/src/main.rs"
+    P.literal(pmain, "#[cfg(windows)]\nmod ui;\n",
+              "#[cfg(windows)]\nmod ui;\n#[cfg(windows)]\nmod edx_install;\n", 1, "mod edx_install")
+    P.literal(pmain, "fn main() -> Result<(), String> {\n",
+              "fn main() -> Result<(), String> {\n    #[cfg(windows)]\n    edx_install::ensure();\n", 1,
+              "hook edx_install::ensure()")
+    P.literal("libs/portable/Cargo.toml", '    "Win32_System_SystemInformation",\n',
+              '    "Win32_System_SystemInformation",\n    "Win32_Foundation",\n'
+              '    "Win32_System_Com",\n    "Win32_UI_Shell",\n', 1, "features COM/Shell")
+    P.write_new("libs/portable/src/edx_install.rs", gen_self_install_rs(flavor.get("windows_self_install")))
+
     # pasta de extração do executável portátil (%LOCALAPPDATA%\<app>)
     P.regex("libs/portable/src/main.rs", r'const APP_PREFIX: &str = "[^"]*";',
             f'const APP_PREFIX: &str = "{app.lower()}";', 1, 1, "pasta do portátil")
@@ -421,7 +534,7 @@ def write_notice(brand, flavor, app, changed):
 
 
 GENERATED_FILES = [
-    "src/edx_branding.rs", "EDX-NOTICE.md", "flutter/assets/icon.png",
+    "src/edx_branding.rs", "EDX-NOTICE.md", "libs/portable/src/edx_install.rs", "flutter/assets/icon.png",
     "flutter/assets/logo.png", "flutter/assets/logo_light.png", "flutter/assets/logo_dark.png",
 ]
 

@@ -2,11 +2,14 @@
 
 | Sistema | Arquivo | Observação |
 |---|---|---|
-| Windows (64 bits) | `*-x86_64.exe` | Executável portátil, não instala |
-| Windows (ARM) | `*-aarch64.exe` | Executável portátil, não instala |
-| macOS Intel | `*-x86_64.dmg` | Arraste o app para fora do DMG e abra |
-| macOS Apple Silicon | `*-aarch64.dmg` | Idem |
-| Linux | `*.AppImage` | `chmod +x` e execute |
+| Windows (64 bits) | `EDX-Suporte-x86_64.exe` | Portátil: ao abrir, guarda uma cópia e cria o atalho "EDX Suporte Remoto" na Área de Trabalho |
+| Windows (ARM) | `EDX-Suporte-aarch64.exe` | Idem |
+| macOS Intel | `EDX-Suporte-x86_64.dmg` | Arraste o app para fora do DMG e abra |
+| macOS Apple Silicon | `EDX-Suporte-aarch64.dmg` | Idem |
+| Linux | `EDX-Suporte-*.AppImage` | `chmod +x` e execute |
+
+Link permanente da versão mais recente:
+`https://github.com/edxtec/edx-suporte/releases/latest/download/EDX-Suporte-x86_64.exe`
 
 Confira a integridade com `SHA256SUMS.txt`.
 

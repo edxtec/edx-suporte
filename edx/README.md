@@ -82,6 +82,32 @@ da release; no `tecnico`, ficam.
 
 As releases saem como *pre-release*. Teste e promova manualmente.
 
+### Link permanente ("sempre a última versão")
+
+Os portáteis saem com nome fixo, sem versão (`EDX-Suporte-x86_64.exe`,
+`EDX-Suporte-aarch64.dmg` etc.). Depois de testar, edite a release e marque
+**Set as the latest release**. A partir daí, estes links apontam sempre para ela:
+
+| Sistema | Link |
+|---|---|
+| Windows x64 | `https://github.com/edxtec/edx-suporte/releases/latest/download/EDX-Suporte-x86_64.exe` |
+| Windows ARM | `…/releases/latest/download/EDX-Suporte-aarch64.exe` |
+| macOS Intel | `…/releases/latest/download/EDX-Suporte-x86_64.dmg` |
+| macOS Apple Silicon | `…/releases/latest/download/EDX-Suporte-aarch64.dmg` |
+| Linux x64 / ARM | `…/releases/latest/download/EDX-Suporte-x86_64.AppImage` / `-aarch64.AppImage` |
+
+Releases do perfil `tecnico` devem ficar sempre como *pre-release*: o GitHub tem
+um único "latest" por repositório.
+
+### Cópia local e atalho (Windows)
+
+Com o bloco `windows_self_install` do perfil em `brand.json`, ao abrir o `.exe`
+baixado ele se copia para `%LOCALAPPDATA%\EDX-RustDesk\EDX-Suporte.exe` e cria
+o atalho **EDX Suporte Remoto** na Área de Trabalho (respeitando Área de Trabalho
+redirecionada para o OneDrive). Sem admin, sem registro, sem serviço: o app continua
+portátil. Abrir a versão nova baixada substitui a cópia; se a cópia antiga estiver
+aberta, a substituição falha em silêncio e acontece na próxima vez.
+
 ## 4. Atualizar para uma nova versão do RustDesk
 
 ```bash
