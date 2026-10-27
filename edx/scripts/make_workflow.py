@@ -36,6 +36,10 @@ KEEP = [
     "build-appimage",
 ]
 
+RUNNER_REPLACEMENTS = {
+    "macos-14": "macos-15",
+}
+
 BRANDING_STEP = """\
 {ind}- name: Apply EDX branding
 {ind}  shell: bash
@@ -117,6 +121,10 @@ def main():
                     sys.exit(f"{name} depende de {dep}, que não está em KEEP")
         if name == "build-for-macOS":
             body = body.replace("RustDesk.app", "${{ env.EDX_APP }}.app")
+        # Imagens de runner aposentadas pelo GitHub (macos-14 sai em 02/11/2026;
+        # antes disso a fila fica sem runner e o job é cancelado).
+        for old, new in RUNNER_REPLACEMENTS.items():
+            body = re.sub(rf"(os:\s*){re.escape(old)}(?=\s*[,}}\n])", rf"\g<1>{new}", body)
         body, n = add_branding(body)
         total += n
         out_jobs.append(body)
