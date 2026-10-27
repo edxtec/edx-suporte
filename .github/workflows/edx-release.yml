@@ -32,6 +32,9 @@ jobs:
   finalize:
     needs: build
     runs-on: ubuntu-22.04
+    # Os secrets da Certum ficam no ambiente "signing": com revisores
+    # obrigatórios configurados, nada é assinado sem aprovação humana.
+    environment: signing
     env:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('edx-dev-{0}', github.run_number) }}
@@ -74,6 +77,64 @@ jobs:
             fi
           done
           ls -l out
+
+      - name: Check code-signing credentials
+        id: signcfg
+        env:
+          CERTUM_EMAIL: ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP: ${{ secrets.CERTUM_OTP }}
+          EDX_SIGN_PFX_B64: ${{ secrets.EDX_SIGN_PFX_B64 }}
+        run: |
+          certum=false; internal=false
+          [ -n "$CERTUM_EMAIL" ] && [ -n "$CERTUM_OTP" ] && certum=true
+          [ -n "$EDX_SIGN_PFX_B64" ] && internal=true
+          echo "enabled=$certum" >> "$GITHUB_OUTPUT"
+          echo "internal=$internal" >> "$GITHUB_OUTPUT"
+          if [ "$certum" = false ] && [ "$internal" = false ]; then
+            echo "::warning title=Assinatura de código::nenhuma credencial no ambiente 'signing'; executáveis Windows publicados SEM assinatura."
+          fi
+
+      # Assina antes do SHA256SUMS e do upload, para que checksums e
+      # downloads correspondam ao binário assinado.
+      - name: Sign Windows executables (Certum SimplySign)
+        if: steps.signcfg.outputs.enabled == 'true'
+        env:
+          CERTUM_EMAIL: ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP: ${{ secrets.CERTUM_OTP }}
+        run: |
+          cargo install ssign --version 0.1.1 --locked
+          shopt -s nullglob
+          exes=(out/*.exe)
+          [ ${#exes[@]} -gt 0 ] || { echo "nenhum .exe para assinar"; exit 0; }
+          ssign "${exes[@]}"
+          sudo apt-get install -y -qq osslsigncode > /dev/null
+          for f in "${exes[@]}"; do
+            echo "== $f"
+            out=$(osslsigncode verify -in "$f" 2>&1 || true)
+            echo "$out" | grep -E "Subject:|Issuer:|Timestamp|Signature verification" || true
+            if echo "$out" | grep -qi "No signature found"; then
+              echo "::error title=Assinatura de código::$f ficou sem assinatura"; exit 1
+            fi
+          done
+
+      # Certificado emitido pela CA interna da EDX. Só é confiável onde a raiz
+      # EDX foi distribuída (GPO/Intune). Se a Certum também assinou, esta
+      # entra como assinatura aninhada.
+      - name: Sign Windows executables (CA interna EDX)
+        if: steps.signcfg.outputs.internal == 'true'
+        env:
+          EDX_SIGN_PFX_B64: ${{ secrets.EDX_SIGN_PFX_B64 }}
+          EDX_SIGN_PFX_PASS: ${{ secrets.EDX_SIGN_PFX_PASS }}
+          EDX_SIGN_CHAIN: ${{ vars.EDX_SIGN_CHAIN }}
+        run: |
+          sudo apt-get install -y -qq osslsigncode > /dev/null
+          shopt -s nullglob
+          exes=(out/*.exe)
+          [ ${#exes[@]} -gt 0 ] || { echo "nenhum .exe para assinar"; exit 0; }
+          bash edx/scripts/sign_internal.sh "${exes[@]}"
+          for f in "${exes[@]}"; do
+            osslsigncode verify -in "$f" 2>&1 | grep -E "Number of signatures|Subject: /CN" | sort -u || true
+          done
 
       - name: Build corresponding-source tarball
         env:

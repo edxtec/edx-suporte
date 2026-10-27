@@ -143,10 +143,49 @@ pela barra de ferramentas. No macOS não existe elevação; o usuário concede
 *Gravação de Tela* e *Acessibilidade* nos Ajustes. No Linux, Wayland exige
 confirmação do usuário a cada sessão.
 
-## 7. Assinatura de código (recomendado antes de distribuir)
+## 7. Assinatura de código (Windows: Certum)
 
-- **Windows**: sem certificado de code signing, o SmartScreen alerta o cliente. O passo de assinatura do upstream usa um serviço próprio deles (`SIGN_BASE_URL`); substitua por `signtool` com o certificado EDX.
-- **macOS**: configure os secrets `MACOS_P12_BASE64`, `MACOS_P12_PASSWORD`, `MACOS_CODESIGN_IDENTITY` e a chave de notarização (conta Apple Developer). Sem isso o DMG sai sem assinatura e o Gatekeeper bloqueia na primeira abertura.
+O job `finalize` assina os `.exe` antes do `SHA256SUMS` e do upload, usando o
+certificado **Certum Standard Code Signing in the Cloud** e a ferramenta
+[`ssign`](https://github.com/Le-Syl21/ssign) (MIT, independente da Certum).
+
+1. Em **Settings → Environments**, crie o ambiente `signing` e marque
+   **Required reviewers** (você). Nenhuma release é assinada sem sua aprovação.
+2. Nesse ambiente, crie os *secrets*:
+   - `CERTUM_EMAIL`: e-mail da conta SimplySign
+   - `CERTUM_OTP`: semente TOTP (base32) ou a URI `otpauth://` do QR de ativação do SimplySign
+3. Sem esses secrets, o passo é pulado com um aviso e o `.exe` sai sem assinatura.
+
+A semente TOTP dá poder de assinar em nome da EDX: guarde-a só no secret e, se
+vazar, gere um novo QR no SimplySign.
+
+### Alternativa sem custo: CA interna da EDX
+
+O passo "CA interna EDX" assina com um certificado emitido pela CA da EDX
+(`edx/scripts/sign_internal.sh`, via `osslsigncode`, com carimbo de tempo).
+A assinatura só é **reconhecida onde a raiz EDX está distribuída** (GPO/Intune);
+nos demais computadores o Windows mostra "Fornecedor desconhecido", como sem
+assinatura. Se a Certum também estiver configurada, a assinatura interna entra
+aninhada e as duas valem.
+
+1. Na CA (AD CS), emita um certificado com o modelo **Assinatura de Código**
+   (EKU *Code Signing*), assunto `EDX Tecnologia em Informação Ltda`, validade de
+   1 ano, e **dedicado a este app**.
+2. Exporte como `.pfx` **com a chave privada e a cadeia completa**.
+3. Em PowerShell: `[Convert]::ToBase64String([IO.File]::ReadAllBytes("edx-cs.pfx")) | Set-Clipboard`
+4. No ambiente `signing`, crie os secrets `EDX_SIGN_PFX_B64` (o texto copiado) e
+   `EDX_SIGN_PFX_PASS` (a senha do `.pfx`). Apague o `.pfx` exportado.
+5. Se o certificado foi emitido por uma **CA intermediária** (que não está na GPO),
+   crie no mesmo ambiente a *variável* `EDX_SIGN_CHAIN` com o PEM da intermediária
+   (`-----BEGIN CERTIFICATE-----` … `-----END CERTIFICATE-----`). Ela é embutida em
+   cada assinatura; sem ela o Windows não fecha a cadeia até a raiz.
+
+Quem obtiver esse `.pfx` consegue assinar programas que serão confiáveis em
+**todas** as máquinas que recebem a raiz EDX por GPO/Intune. Por isso: certificado
+exclusivo, validade curta, revisores obrigatórios no ambiente `signing` e
+revogação imediata na CA em caso de vazamento.
+
+**macOS**: exige conta Apple Developer (Developer ID + notarização); fica para depois.
 
 ## 8. Licença: o que este fork cumpre e por quê
 
